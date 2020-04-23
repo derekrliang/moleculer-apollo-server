@@ -14,7 +14,7 @@ const { makeExecutableSchema, mergeSchemas } = require("graphql-tools");
 const GraphQL = require("graphql");
 const { PubSub, withFilter } = require("graphql-subscriptions");
 const hash = require("object-hash");
-const { buildSchema } = require("type-graphql");
+const { buildTypeDefsAndResolvers, buildSchema } = require("type-graphql");
 
 module.exports = function(mixinOptions) {
 	mixinOptions = _.defaultsDeep(mixinOptions, {
@@ -321,9 +321,9 @@ module.exports = function(mixinOptions) {
 			 * @param {Object[]} services
 			 * @returns {Object} Generated schema
 			 */
-			generateGraphQLSchema(services) {
+			generateGraphQLSchema(services, typeGraphQLSchema) {
 				try {
-					let typeDefs = [];
+					let typeDefs =[];
 					let resolvers = {};
 					let schemaDirectives = null;
 
@@ -442,6 +442,18 @@ module.exports = function(mixinOptions) {
 									});
 								}
 
+								if (def.mutationRef) {
+									if (!resolver["Mutation"]) resolver.Mutation = {};
+
+									const name = def.mutationRef.name;
+									resolver.Mutation[name] = this.createActionResolver(
+										action.name,
+										{
+											fileUploadArg: def.fileUploadArg,
+										}
+									);
+								}
+
 								if (def.subscription) {
 									if (!resolver["Subscription"]) resolver.Subscription = {};
 
@@ -553,6 +565,12 @@ module.exports = function(mixinOptions) {
 						typeDefs.push(str);
 					}
 
+					if (typeGraphQLSchema) {
+						return mergeSchemas({
+							schemas: [typeGraphQLSchema, typeDefs.join('\n')],
+							resolvers
+						});
+					}
 					return makeExecutableSchema({ typeDefs, resolvers, schemaDirectives });
 				} catch (err) {
 					throw new MoleculerServerError(
@@ -578,19 +596,18 @@ module.exports = function(mixinOptions) {
 				try {
 					this.pubsub = new PubSub();
 					const services = this.broker.registry.getServiceList({ withActions: true });
-					const moleculerSchema = this.generateGraphQLSchema(services);
 
-					let schema = moleculerSchema;
-
-					// Generate and merge with type-graphql schema
-					// Also should watch resolvers path for changes and reload/rebuild schema if changes
+					// Generate type-graphql schema and pass it to merge
+					
+					let typeGraphQLSchema;
 					if (mixinOptions.typeGraphQL) {
-						// build TypeGraphQL executable schema
-						const typeGraphQLSchema = await buildSchema(mixinOptions.typeGraphQL);
-						schema = mergeSchemas({
-							schemas: [moleculerSchema, typeGraphQLSchema ],
-						});
+						typeGraphQLSchema = await buildSchema(mixinOptions.typeGraphQL);
+						// const typeGraphQL = await buildTypeDefsAndResolvers(mixinOptions.typeGraphQL);
+						// typeDefs = typeGraphQL.typeDefs;
+						// resolvers = typeGraphQL.resolvers;
 					}
+
+					const schema = this.generateGraphQLSchema(services, typeGraphQLSchema);
 
 					this.logger.debug(
 						"Generated GraphQL schema:\n\n" + GraphQL.printSchema(schema)
