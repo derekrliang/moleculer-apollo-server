@@ -34,6 +34,11 @@ declare module "moleculer-apollo-server" {
 		supportsSubscriptions(): boolean;
 	}
 
+	export interface TypeGraphQLOptions {
+		resolvers: Array<Function | string>;
+		emitSchemaFile?: String;
+	}
+
 	export interface ActionResolverSchema {
 		action: string;
 		rootParams?: {
@@ -93,6 +98,7 @@ declare module "moleculer-apollo-server" {
 		routeOptions?: ServiceRouteOptions;
 		serverOptions?: Config;
 		autoUpdateSchema?: boolean;
+		typeGraphQL?: TypeGraphQLOptions;
 	}
 
 	export function ApolloService(options: ApolloServiceOptions): ServiceSchema;

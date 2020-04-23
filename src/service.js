@@ -10,10 +10,11 @@ const _ = require("lodash");
 const { MoleculerServerError } = require("moleculer").Errors;
 const { ApolloServer } = require("./ApolloServer");
 const DataLoader = require("dataloader");
-const { makeExecutableSchema } = require("graphql-tools");
+const { makeExecutableSchema, mergeSchemas } = require("graphql-tools");
 const GraphQL = require("graphql");
 const { PubSub, withFilter } = require("graphql-subscriptions");
 const hash = require("object-hash");
+const { buildSchema } = require("type-graphql");
 
 module.exports = function(mixinOptions) {
 	mixinOptions = _.defaultsDeep(mixinOptions, {
@@ -563,7 +564,7 @@ module.exports = function(mixinOptions) {
 				}
 			},
 
-			prepareGraphQLSchema() {
+			async prepareGraphQLSchema() {
 				// Schema is up-to-date
 				if (!this.shouldUpdateGraphqlSchema && this.graphqlHandler) {
 					return;
@@ -577,7 +578,19 @@ module.exports = function(mixinOptions) {
 				try {
 					this.pubsub = new PubSub();
 					const services = this.broker.registry.getServiceList({ withActions: true });
-					const schema = this.generateGraphQLSchema(services);
+					const moleculerSchema = this.generateGraphQLSchema(services);
+
+					let schema = moleculerSchema;
+
+					// Generate and merge with type-graphql schema
+					// Also should watch resolvers path for changes and reload/rebuild schema if changes
+					if (mixinOptions.typeGraphQL) {
+						// build TypeGraphQL executable schema
+						const typeGraphQLSchema = await buildSchema(mixinOptions.typeGraphQL);
+						schema = mergeSchemas({
+							schemas: [moleculerSchema, typeGraphQLSchema ],
+						});
+					}
 
 					this.logger.debug(
 						"Generated GraphQL schema:\n\n" + GraphQL.printSchema(schema)
@@ -670,7 +683,7 @@ module.exports = function(mixinOptions) {
 			},
 		},
 
-		created() {
+		async created() {
 			this.apolloServer = null;
 			this.graphqlHandler = null;
 			this.graphqlSchema = null;
@@ -681,17 +694,17 @@ module.exports = function(mixinOptions) {
 
 			const route = _.defaultsDeep(mixinOptions.routeOptions, {
 				aliases: {
-					"/"(req, res) {
+					"/": async (req, res) => {
 						try {
-							this.prepareGraphQLSchema();
+							await this.prepareGraphQLSchema();
 							return this.graphqlHandler(req, res);
 						} catch (err) {
 							this.sendError(req, res, err);
 						}
 					},
-					"GET /.well-known/apollo/server-health"(req, res) {
+					"GET /.well-known/apollo/server-health": async (req, res) => {
 						try {
-							this.prepareGraphQLSchema();
+							await this.prepareGraphQLSchema();
 						} catch (err) {
 							res.statusCode = 503;
 							return this.sendResponse(
