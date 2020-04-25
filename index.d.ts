@@ -36,6 +36,7 @@ declare module "moleculer-apollo-server" {
 
 	export interface TypeGraphQLOptions {
 		resolvers: Array<Function | string>;
+		authChecker?: Function,
 		emitSchemaFile?: String;
 	}
 

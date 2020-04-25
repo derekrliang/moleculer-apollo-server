@@ -128,7 +128,7 @@ module.exports = function(mixinOptions) {
 			 * @param {String} actionName
 			 * @param {Object?} def
 			 */
-			createActionResolver(actionName, def = {}) {
+			createActionResolver(actionName, def = {}, actionDef, middlewares) {
 				const {
 					dataLoader: useDataLoader = false,
 					nullIfError = false,
@@ -138,7 +138,7 @@ module.exports = function(mixinOptions) {
 				} = def;
 				const rootKeys = Object.keys(rootParams);
 
-				return async (root, args, context) => {
+				return async (root, args, context, info) => {
 					try {
 						if (useDataLoader) {
 							const dataLoaderMapKey = this.getDataLoaderMapKey(
@@ -220,10 +220,18 @@ module.exports = function(mixinOptions) {
 								});
 							}
 
+							context.$action = actionDef;
+
+							if (middlewares && middlewares.length) {
+								for (let i = 0; i < middlewares.length; i++) {
+									const resp = await middlewares[i](root, args, context, info);
+									console.log(resp);		
+								}
+							}
+
 							return await context.ctx.call(
 								actionName,
-								_.defaultsDeep({}, args, params, staticParams),
-								{ hello: "word" }
+								_.defaultsDeep({}, args, params, staticParams)
 							);
 						}
 					} catch (err) {
@@ -322,7 +330,7 @@ module.exports = function(mixinOptions) {
 			 * @param {Object[]} services
 			 * @returns {Object} Generated schema
 			 */
-			generateGraphQLSchema(services, typeGraphQLSchema) {
+			generateGraphQLSchema(services, typeGraphQLSchema, qlResolvers) {
 				try {
 					let typeDefs =[];
 					let resolvers = {};
@@ -457,16 +465,36 @@ module.exports = function(mixinOptions) {
 
 								if (def.queryRef) {
 									if (!resolver["Query"]) resolver.Query = {};
-
 									const name = def.queryRef.name;
-									resolver.Query[name] = this.createActionResolver(
-										action.name,
-										{
-											params: {
-												auth: true
-											}
-										}
-									);
+									const typeGraphQLResolverQuery = typeGraphQLSchema._queryType._fields[name];
+									if (typeGraphQLResolverQuery) {
+										resolver.Query[name] = this.createActionResolver(
+											action.name,
+											{},
+											action,
+											[typeGraphQLResolverQuery.resolve]
+										);
+									}
+										// resolver.Query[name] = async (root, args, context, info) => {
+										// 	context.$action = action;
+										// 	await typeGraphQLResolverQuery.resolve(root, args, context, info);
+
+										
+										// 	const {
+										// 		dataLoader: useDataLoader = false,
+										// 		nullIfError = false,
+										// 		params: staticParams = {},
+										// 		rootParams = {},
+										// 		fileUploadArg = null,
+										// 	} = def;
+										// 	const rootKeys = Object.keys(rootParams);
+
+										// 	return context.ctx.call(
+										// 		actionName,
+										// 		_.defaultsDeep({}, args, params, staticParams)
+										// 	);
+										// }
+									// }
 								}
 
 								if (def.subscription) {
@@ -622,7 +650,7 @@ module.exports = function(mixinOptions) {
 						// resolvers = typeGraphQL.resolvers;
 					}
 
-					const schema = this.generateGraphQLSchema(services, typeGraphQLSchema);
+					const schema = this.generateGraphQLSchema(services, typeGraphQLSchema, mixinOptions.typeGraphQL.resolvers);
 
 					this.logger.debug(
 						"Generated GraphQL schema:\n\n" + GraphQL.printSchema(schema)
