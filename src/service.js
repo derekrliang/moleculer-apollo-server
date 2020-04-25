@@ -220,7 +220,7 @@ module.exports = function(mixinOptions) {
 								});
 							}
 
-							context.$action = actionDef;
+							context.ctx.$action = actionDef;
 
 							if (middlewares && middlewares.length) {
 								for (let i = 0; i < middlewares.length; i++) {
