@@ -135,11 +135,20 @@ module.exports = function(mixinOptions) {
 					params: staticParams = {},
 					rootParams = {},
 					fileUploadArg = null,
+					batch = false,
 				} = def;
 				const rootKeys = Object.keys(rootParams);
 
 				return async (root, args, context, info) => {
 					try {
+						context.ctx.$action = actionDef;
+
+						if (middlewares && middlewares.length) {
+							for (let i = 0; i < middlewares.length; i++) {
+								await middlewares[i](root, args, context, info);
+							}
+						}
+
 						if (useDataLoader) {
 							const dataLoaderMapKey = this.getDataLoaderMapKey(
 								actionName,
@@ -193,6 +202,25 @@ module.exports = function(mixinOptions) {
 								: await dataLoader.load(dataLoaderKey);
 						} else if (fileUploadArg != null && args[fileUploadArg] != null) {
 							if (Array.isArray(args[fileUploadArg])) {
+
+								if (batch) {
+									const fileStreamObjs = await Promise.all(
+										args[fileUploadArg].map(async uploadPromise => {
+											const {
+												createReadStream,
+												...$fileInfo
+											} = await uploadPromise;
+											return {
+												readStream: createReadStream(),
+												meta: $fileInfo,
+											};
+										})
+									);
+									return context.ctx.call(actionName, {
+										files: fileStreamObjs,
+									});
+								}
+
 								return await Promise.all(
 									args[fileUploadArg].map(async uploadPromise => {
 										const {
@@ -219,16 +247,6 @@ module.exports = function(mixinOptions) {
 									_.set(params, rootParams[key], _.get(root, key));
 								});
 							}
-
-							context.ctx.$action = actionDef;
-
-							if (middlewares && middlewares.length) {
-								for (let i = 0; i < middlewares.length; i++) {
-									const resp = await middlewares[i](root, args, context, info);
-									console.log(resp);		
-								}
-							}
-
 							return await context.ctx.call(
 								actionName,
 								_.defaultsDeep({}, args, params, staticParams)
@@ -332,7 +350,7 @@ module.exports = function(mixinOptions) {
 			 */
 			generateGraphQLSchema(services, typeGraphQLSchema, qlResolvers) {
 				try {
-					let typeDefs =[];
+					let typeDefs = [];
 					let resolvers = {};
 					let schemaDirectives = null;
 
@@ -455,46 +473,44 @@ module.exports = function(mixinOptions) {
 									if (!resolver["Mutation"]) resolver.Mutation = {};
 
 									const name = def.mutationRef.name;
-									resolver.Mutation[name] = this.createActionResolver(
-										action.name,
-										{
-											fileUploadArg: def.fileUploadArg,
-										}
-									);
+									const typeGraphQLResolverMutation =
+										typeGraphQLSchema._mutationType._fields[name];
+
+									if (!typeGraphQLResolverMutation) {
+										throw new Error(
+											"Could not resolve query reference to a TypeGql Mutation!"
+										);
+									}
+
+									if (typeGraphQLResolverMutation) {
+										resolver.Mutation[name] = this.createActionResolver(
+											action.name,
+											{
+												fileUploadArg: def.fileUploadArg,
+												batch: def.batch,
+											},
+											action,
+											[typeGraphQLResolverMutation.resolve]
+										);
+									}
 								}
 
 								if (def.queryRef) {
 									if (!resolver["Query"]) resolver.Query = {};
 									const name = def.queryRef.name;
-									const typeGraphQLResolverQuery = typeGraphQLSchema._queryType._fields[name];
-									if (typeGraphQLResolverQuery) {
-										resolver.Query[name] = this.createActionResolver(
-											action.name,
-											{},
-											action,
-											[typeGraphQLResolverQuery.resolve]
+									const typeGraphQLResolverQuery =
+										typeGraphQLSchema._queryType._fields[name];
+									if (!typeGraphQLResolverQuery) {
+										throw new Error(
+											"Could not resolve query reference to a TypeGql Query!"
 										);
 									}
-										// resolver.Query[name] = async (root, args, context, info) => {
-										// 	context.$action = action;
-										// 	await typeGraphQLResolverQuery.resolve(root, args, context, info);
-
-										
-										// 	const {
-										// 		dataLoader: useDataLoader = false,
-										// 		nullIfError = false,
-										// 		params: staticParams = {},
-										// 		rootParams = {},
-										// 		fileUploadArg = null,
-										// 	} = def;
-										// 	const rootKeys = Object.keys(rootParams);
-
-										// 	return context.ctx.call(
-										// 		actionName,
-										// 		_.defaultsDeep({}, args, params, staticParams)
-										// 	);
-										// }
-									// }
+									resolver.Query[name] = this.createActionResolver(
+										action.name,
+										{},
+										action,
+										[typeGraphQLResolverQuery.resolve]
+									);
 								}
 
 								if (def.subscription) {
@@ -610,8 +626,8 @@ module.exports = function(mixinOptions) {
 
 					if (typeGraphQLSchema) {
 						return mergeSchemas({
-							schemas: [typeGraphQLSchema, typeDefs.join('\n')],
-							resolvers
+							schemas: [typeGraphQLSchema, typeDefs.join("\n")],
+							resolvers,
 						});
 					}
 					return makeExecutableSchema({ typeDefs, resolvers, schemaDirectives });
@@ -641,7 +657,7 @@ module.exports = function(mixinOptions) {
 					const services = this.broker.registry.getServiceList({ withActions: true });
 
 					// Generate type-graphql schema and pass it to merge
-					
+
 					let typeGraphQLSchema;
 					if (mixinOptions.typeGraphQL) {
 						typeGraphQLSchema = await buildSchema(mixinOptions.typeGraphQL);
