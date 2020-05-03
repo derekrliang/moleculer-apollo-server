@@ -216,9 +216,10 @@ module.exports = function(mixinOptions) {
 											};
 										})
 									);
-									return context.ctx.call(actionName, {
-										files: fileStreamObjs,
-									});
+									return context.ctx.call(
+										actionName,
+										_.defaultsDeep({ files: fileStreamObjs }, args)
+									);
 								}
 
 								return await Promise.all(
