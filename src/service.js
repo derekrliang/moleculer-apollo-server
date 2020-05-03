@@ -250,7 +250,8 @@ module.exports = function(mixinOptions) {
 							}
 							return await context.ctx.call(
 								actionName,
-								_.defaultsDeep({}, args, params, staticParams)
+								_.defaultsDeep({}, args, params, staticParams),
+								{ meta: context.ctx.params }
 							);
 						}
 					} catch (err) {
